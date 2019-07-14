@@ -10,7 +10,9 @@ import numpy as np
 import pandas as pd
 from matplotlib.colors import ListedColormap
 import time
-
+import pdb
+import dask.dataframe as dd
+from dask.multiprocessing import get
 
 
 # Data
@@ -25,6 +27,11 @@ i_data = pd.DataFrame([[1,1,1,3,1,5],
                        [5,4,1,5,3,5],
                        [6,2,5,4,5,5]],columns=['sequence','start_row','start_column','end_row','end_column','dim'])
 
+
+
+
+
+
 i_data = pd.DataFrame([[1,1,1,4,2,7],
                        [2,1,5,2,6,7],
                        [3,1,6,3,5,7],
@@ -36,6 +43,17 @@ i_data = pd.DataFrame([[1,1,1,4,2,7],
                        [9,7,1,6,2,7]
                        ],columns=['sequence','start_row','start_column','end_row','end_column','dim'])
 
+
+
+i_data = pd.DataFrame([[1,1,9,6,1,10],
+                       [2,1,10,2,7,10],
+                       [3,2,6,3,10,10],
+                       [4,3,3,6,8,10],
+                       [5,4,3,10,3,10],
+                       [6,5,9,8,6,10],
+                       [7,6,5,7,1,10],
+                       [8,6,9,9,2,10],
+                       [9,7,5,10,10,10]],columns=['sequence','start_row','start_column','end_row','end_column','dim'])
 
 
 
@@ -52,15 +70,9 @@ i_data = pd.DataFrame([[1,1,1,8,1,9],
                        ],columns=['sequence','start_row','start_column','end_row','end_column','dim'])
 
 
-i_data = pd.DataFrame([[1,1,9,6,1,10],
-                       [2,1,10,2,7,10],
-                       [3,2,6,3,10,10],
-                       [4,3,3,6,8,10],
-                       [5,4,3,10,3,10],
-                       [6,5,9,8,6,10],
-                       [7,6,5,7,1,10],
-                       [8,6,9,9,2,10],
-                       [9,7,5,10,10,10]],columns=['sequence','start_row','start_column','end_row','end_column','dim'])
+
+
+
 
 o_data=np.zeros((i_data['dim'][0],i_data['dim'][0]))
 
@@ -103,17 +115,20 @@ t_occupied_end = [[i_data['end_row'][i],i_data['end_column'][i]] for i in range(
 
 
 # route verification
-def verify_route(route, i_mapping, i_data):
-    
-    # if not enough edge points, we do not delete any rows
-    t_route = [i[0] for i in route] + [i[1] for i in route]
-    if t_route.count(1)+t_route.count(10)<=1:
-        return True
+def verify_route(i_route, i_mapping, i_data):
     
     DIM = i_data['dim'][0]
+    
+    i_route = i_route['route']
 
+    # if not enough edge points, we do not delete any rows
+    #t_4 =[j[1] for j in i_route] + [i[0] for i in i_route] # 
+        
+    #if (t_4.count(1)+t_4.count(DIM))<=1:
+    #    return True
+    
     # find starting point
-    route_set = {(i[0],i[1]) for i in route }
+    route_set = {(i[0],i[1]) for i in i_route }
     t_fullset = {(i,j) for i in range(1,DIM+1) for j in range(1,DIM+1)}
     t_starting_point = list(t_fullset.difference(route_set))[0]
     
@@ -128,7 +143,7 @@ def verify_route(route, i_mapping, i_data):
         t_1 = t_1.merge(i_mapping, how = 'left', on =['1_x','1_y'])[['2_x','2_y']].rename(columns = {'2_x':'1_x','2_y':'1_y'})
         # delete points on the route
         t_1['coord_str'] = t_1.apply(lambda x: '['+x['1_x'].astype(str)+', '+x['1_y'].astype(str)+']', axis = 1)
-        t_1 = t_1[~t_1['coord_str'].apply(lambda x: x in str(route))]
+        t_1 = t_1[~t_1['coord_str'].apply(lambda x: x in str(i_route))]
         # update all the points found so far
         t_1 = t_1[['1_x','1_y']].drop_duplicates()
         
@@ -184,6 +199,8 @@ def route_process(route_ongoing,t_adj_all, t_occupied_start, t_occupied_end, i_d
                      (x['coord_str'].apply(lambda x: x in str(t_occupied_end)))].index, axis = 0 )
        
     
+    
+    
     ###################################################
     # Step 6: check if edge-to-edge routes split the start/end points in a wrong way
     DIM = i_data['dim'][0]
@@ -199,16 +216,24 @@ def route_process(route_ongoing,t_adj_all, t_occupied_start, t_occupied_end, i_d
                           , columns = ['1_x','1_y','2_x','2_y'])
     i_mapping = i_mapping[(i_mapping['2_x']>=1)&(i_mapping['2_x']<=10)]
     i_mapping = i_mapping[(i_mapping['2_y']>=1)&(i_mapping['2_y']<=10)]
-        
+    
     # main function below
-    t_route = x['route_list'].astype(str).str[:-1]+','+x['coord_str']+']'
-    t_route = t_route.apply(lambda x: eval(x))
-    
-    x = x[t_route.apply(lambda x: verify_route(x, i_mapping, i_data))]
-    
+    if x.shape[0]>0:
+        t_route = x['route_list'].astype(str).str[:-1]+','+x['coord_str']+']'
+        t_route = t_route.apply(lambda x: eval(x))
         
+        
+        t_route=pd.DataFrame(t_route, columns = ['route']) # make sure it is dataframe 
+        #x = x[t_route.apply(lambda x: verify_route(x, i_mapping, i_data),axis = 1)] ########### old syntax #############
+            
+        #ddata = dd.from_pandas(t_route, npartitions=20)
+        #t_cond=ddata.map_partitions(lambda df: df.apply((lambda row: verify_route(row, i_mapping, i_data)), axis=1)).compute(scheduler='threads')
+        #x = x[t_cond]
+    
+    ###################################################    
     
     # Step 6: update route_list and curr_position
+
     x['prev_position_x']=x['curr_position_x']
     x['prev_position_y']=x['curr_position_y']
     x['curr_position_x']=x['2_x']
